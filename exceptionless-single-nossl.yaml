@@ -1,0 +1,132 @@
+version: "3.7"
+
+services:
+  es-setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    user: ${ES_USER_ID}
+    command: >
+      bash -c '
+        if [ x${ELASTIC_PASSWORD} == x ]; then
+          echo "Set the ELASTIC_PASSWORD environment variable in the .env file";
+          exit 1;
+        fi;
+        echo "Waiting for Elasticsearch availability";
+        until curl -s http://es01:9200 | grep -q "missing authentication credentials"; do sleep 30; done;
+        echo "Setting kibana_system password";
+        until curl -s -X POST -u "elastic:${ELASTIC_PASSWORD}" -H "Content-Type: application/json" http://es01:9200/_security/user/kibana_system/_password -d "{\"password\":\"${KIBANA_PASSWORD}\"}" | grep -q "^{}"; do sleep 10; done;
+        echo "All done!";
+      '
+
+  es01:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    user: ${ES_USER_ID}
+    volumes:
+      - ${ES_CERT_PATH}:/usr/share/elasticsearch/config/certs
+      - ${ES_DATA_PATH}:/usr/share/elasticsearch/data
+      - ${ES_LOG_PATH}:/var/log/elasticsearch
+    # ports:
+    #   - ${ES_PORT}:9200
+    environment:
+      node.name: es01
+      cluster.name: ${ELASTIC_CLUSTER_NAME}
+      discovery.type: single-node
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+      bootstrap.memory_lock: true
+      xpack.security.enabled: true
+      xpack.security.http.ssl.enabled: false
+      # xpack.security.http.ssl.key: certs/es01/es01.key
+      # xpack.security.http.ssl.certificate: certs/es01/es01.crt
+      # xpack.security.http.ssl.certificate_authorities: certs/ca/ca.crt
+      # xpack.security.transport.ssl.enabled: true
+      # xpack.security.transport.ssl.key: certs/es01/es01.key
+      # xpack.security.transport.ssl.certificate: certs/es01/es01.crt
+      # xpack.security.transport.ssl.certificate_authorities: certs/ca/ca.crt
+      # xpack.security.transport.ssl.verification_mode: certificate
+      xpack.license.self_generated.type: ${ES_LICENSE}
+    mem_limit: ${MEM_LIMIT}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s http://localhost:9200 | grep -q 'missing authentication credentials'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+  ex-app:
+    depends_on:
+      - es01
+    image: exceptionless/app:${EXCEPTIONLESS_VERSION}
+    environment:
+      EX_AppMode: Production
+      # EX_ConnectionStrings__Cache: provider=redis
+      EX_ConnectionStrings__Elasticsearch: server=http://es01:9200;username=elastic;password=${ELASTIC_PASSWORD}
+      # EX_ConnectionStrings__MessageBus: provider=redis
+      # EX_ConnectionStrings__Queue: provider=redis
+      # EX_ConnectionStrings__Redis: server=redis,abortConnect=false
+      EX_ConnectionStrings__Storage: provider=folder;path=/app/storage
+      #ASPNETCORE_HTTPS_PORT: 5201
+      #ASPNETCORE_URLS: http://+
+      #ASPNETCORE_URLS: http://+;https://+
+      #ASPNETCORE_Kestrel__Certificates__Default__Password: password
+      #ASPNETCORE_Kestrel__Certificates__Default__Path: /https/aspnetapp.pfx
+      EX_RunJobsInProcess: "false"
+    ports:
+      - 9090:8080
+    volumes:
+      - ${EXCEPTIONLESS_DATA_PATH}:/app/storage
+      # - ex_ssldata:/https
+
+  ex-jobs:
+    depends_on:
+      - ex-app
+    image: exceptionless/job:${EXCEPTIONLESS_VERSION}
+    environment:
+      EX_AppMode: Production
+      EX_BaseURL: http://localhost:5200
+      # EX_ConnectionStrings__Cache: provider=redis
+      EX_ConnectionStrings__Elasticsearch: server=http://es01:9200;username=elastic;password=${ELASTIC_PASSWORD}
+      #EX_ConnectionStrings__Email: smtps://user:password@smtp.host.com:587
+      # EX_ConnectionStrings__MessageBus: provider=redis
+      # EX_ConnectionStrings__Queue: provider=redis
+      # EX_ConnectionStrings__Redis: server=redis,abortConnect=false
+      EX_ConnectionStrings__Storage: provider=folder;path=/app/storage
+    volumes:
+      - ${EXCEPTIONLESS_DATA_PATH}:/app/storage
+
+  kibana:
+    depends_on:
+      es01:
+        condition: service_healthy
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+    user: ${ES_USER_ID}
+    volumes:
+      # - certs:/usr/share/kibana/config/certs
+      - ${KIBANA_DATA_PATH}:/usr/share/kibana/data
+    ports:
+      - ${KIBANA_PORT}:5601
+    environment:
+      SERVERNAME: kibana
+      ELASTICSEARCH_HOSTS: http://es01:9200
+      ELASTICSEARCH_USERNAME: kibana_system
+      ELASTICSEARCH_PASSWORD: ${KIBANA_PASSWORD}
+      # ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES: config/certs/ca/ca.crt
+    mem_limit: ${MEM_LIMIT}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s -I http://localhost:5601 | grep -q 'HTTP/1.1 302 Found'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+
+### File modified from https://raw.githubusercontent.com/dadoonet/legacy-search/7b7b3035df531248bfb2c93ccbb3aacd5e3188ad/docker-compose.yml
+### https://raw.githubusercontent.com/exceptionless/Exceptionless/main/samples/docker-compose.yml
