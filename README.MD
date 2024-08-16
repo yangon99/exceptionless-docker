@@ -5,6 +5,11 @@
 
 由于部署环境不方便分享和更新自签名 https 证书，因此生产环境不使用 https
 
+ref: 
+- [dadoonet/legacy-search/docker-compose.yml](https://github.com/dadoonet/legacy-search/blob/7b7b3035df531248bfb2c93ccbb3aacd5e3188ad/docker-compose.yml)
+- [exceptionless docker-compose sample](https://github.com/exceptionless/Exceptionless/blob/main/samples/docker-compose.yml)
+
+
 ## 配置
 
 配置主要修改 `exceptionless.env` 文件中的内容（正式环境该文件一般为 `.env` 文件，用于 docker compose 的环境配置）
